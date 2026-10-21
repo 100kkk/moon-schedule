@@ -6,20 +6,29 @@ pub suberror ScheduleError {
 
 ///|
 pub struct DateTime {
-  year : Int
-  month : Int
-  day : Int
-  hour : Int
-  minute : Int
+  year : Int32
+  month : Int32
+  day : Int32
+  hour : Int32
+  minute : Int32
 } derive(Eq, Compare, Debug)
 
 ///|
-pub fn is_leap_year(year : Int) -> Bool {
+pub extend DateTime with Eq::{equal, not_equal}
+
+///|
+pub extend DateTime with Compare::{compare, op_lt, op_le, op_ge, op_gt}
+
+///|
+pub extend DateTime with @debug.Debug::{to_repr}
+
+///|
+pub fn is_leap_year(year : Int32) -> Bool {
   (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 ///|
-pub fn days_in_month(year : Int, month : Int) -> Int {
+pub fn days_in_month(year : Int32, month : Int32) -> Int32 {
   match month {
     1 | 3 | 5 | 7 | 8 | 10 | 12 => 31
     4 | 6 | 9 | 11 => 30
@@ -30,12 +39,15 @@ pub fn days_in_month(year : Int, month : Int) -> Int {
 
 ///|
 pub fn DateTime::new(
-  year : Int,
-  month : Int,
-  day : Int,
-  hour : Int,
-  minute : Int,
+  year : Int32,
+  month : Int32,
+  day : Int32,
+  hour : Int32,
+  minute : Int32,
 ) -> DateTime raise ScheduleError {
+  if year < 1 || year > 9999 {
+    raise InvalidDate("year must be 1..9999")
+  }
   if month < 1 || month > 12 {
     raise InvalidDate("month must be 1..12")
   }
@@ -45,7 +57,7 @@ pub fn DateTime::new(
   if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
     raise InvalidDate("time must be within 00:00..23:59")
   }
-  { year, month, day, hour, minute }
+  { year, month, day, hour, minute, }
 }
 
 ///|
@@ -74,61 +86,70 @@ pub fn DateTime::parse(input : String) -> DateTime raise ScheduleError {
 }
 
 ///|
-pub fn DateTime::add_minutes(self : DateTime, amount : Int) -> DateTime {
-  if amount == 0 {
-    self
-  } else if amount > 0 {
-    let next_minute = self.minute + 1
-    if next_minute < 60 {
-      { ..self, minute: next_minute }.add_minutes(amount - 1)
-    } else if self.hour < 23 {
-      { ..self, hour: self.hour + 1, minute: 0 }.add_minutes(amount - 1)
+pub fn DateTime::add_minutes(
+  self : DateTime,
+  amount : Int32,
+) -> DateTime raise ScheduleError {
+  let minutes = day_index(self).to_int64() * 1440 +
+    self.hour.to_int64() * 60 +
+    self.minute.to_int64() +
+    amount.to_int64()
+  if minutes < 0 || minutes >= days_before_year(10000).to_int64() * 1440 {
+    raise InvalidDate("minute arithmetic exceeds years 1..9999")
+  }
+  let day = (minutes / 1440).to_int()
+  let clock = (minutes % 1440).to_int()
+  date_at(day, clock / 60, clock % 60)
+}
+
+///|
+pub fn DateTime::next_day(self : DateTime) -> DateTime raise ScheduleError {
+  self.add_minutes(1440 - self.hour * 60 - self.minute)
+}
+
+///|
+fn days_before_year(year : Int32) -> Int32 {
+  let y = year - 1
+  y * 365 + y / 4 - y / 100 + y / 400
+}
+
+///|
+fn month_start(year : Int32, month : Int32) -> Int32 {
+  let mut day = days_before_year(year)
+  for m in 1..<month {
+    day = day + days_in_month(year, m)
+  }
+  day
+}
+
+///|
+fn day_index(date : DateTime) -> Int32 {
+  month_start(date.year, date.month) + date.day - 1
+}
+
+///|
+fn date_at(day : Int32, hour : Int32, minute : Int32) -> DateTime {
+  let mut low = 1
+  let mut high = 10000
+  while low + 1 < high {
+    let mid = (low + high) / 2
+    if days_before_year(mid) <= day {
+      low = mid
     } else {
-      self.next_day().add_minutes(amount - 1)
-    }
-  } else {
-    let previous_minute = self.minute - 1
-    if previous_minute >= 0 {
-      { ..self, minute: previous_minute }.add_minutes(amount + 1)
-    } else if self.hour > 0 {
-      { ..self, hour: self.hour - 1, minute: 59 }.add_minutes(amount + 1)
-    } else {
-      self.previous_day().add_minutes(amount + 1)
+      high = mid
     }
   }
+  let mut remaining = day - days_before_year(low)
+  let mut month = 1
+  while remaining >= days_in_month(low, month) {
+    remaining = remaining - days_in_month(low, month)
+    month = month + 1
+  }
+  { year: low, month, day: remaining + 1, hour, minute, }
 }
 
 ///|
-pub fn DateTime::next_day(self : DateTime) -> DateTime {
-  if self.day < days_in_month(self.year, self.month) {
-    { ..self, day: self.day + 1, hour: 0, minute: 0 }
-  } else if self.month < 12 {
-    { year: self.year, month: self.month + 1, day: 1, hour: 0, minute: 0 }
-  } else {
-    { year: self.year + 1, month: 1, day: 1, hour: 0, minute: 0 }
-  }
-}
-
-///|
-fn DateTime::previous_day(self : DateTime) -> DateTime {
-  if self.day > 1 {
-    { ..self, day: self.day - 1, hour: 23, minute: 59 }
-  } else if self.month > 1 {
-    let month = self.month - 1
-    {
-      year: self.year,
-      month,
-      day: days_in_month(self.year, month),
-      hour: 23,
-      minute: 59,
-    }
-  } else {
-    { year: self.year - 1, month: 12, day: 31, hour: 23, minute: 59 }
-  }
-}
-
-///|
-pub fn DateTime::weekday(self : DateTime) -> Int {
+pub fn DateTime::weekday(self : DateTime) -> Int32 {
   let mut y = self.year
   let mut m = self.month
   if m < 3 {
@@ -139,14 +160,17 @@ pub fn DateTime::weekday(self : DateTime) -> Int {
 }
 
 ///|
-fn parse_number(input : StringView, name : String) -> Int raise ScheduleError {
+fn parse_number(input : StringView, name : String) -> Int32 raise ScheduleError {
+  if input.length() == 0 || !input.iter().all(c => c >= '0' && c <= '9') {
+    raise InvalidDate("\{name} requires ASCII digits")
+  }
   @string.parse_int(input.to_owned()) catch {
     _ => raise InvalidDate("invalid \{name}")
   }
 }
 
 ///|
-fn pad2(value : Int) -> String {
+fn pad2(value : Int32) -> String {
   if value < 10 {
     "0\{value}"
   } else {
@@ -155,7 +179,7 @@ fn pad2(value : Int) -> String {
 }
 
 ///|
-fn pad4(value : Int) -> String {
+fn pad4(value : Int32) -> String {
   if value < 10 {
     "000\{value}"
   } else if value < 100 {

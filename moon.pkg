@@ -1,3 +1,8 @@
 import {
+  "moonbitlang/core/debug",
   "moonbitlang/core/string",
 }
+
+import {
+  "100kkk/moon-schedule" @schedule,
+} for "test"
